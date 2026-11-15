@@ -152,8 +152,12 @@ enum DevSnapshot {
         guard let path = env["VT_SNAPSHOT"], !path.isEmpty else { return false }
 
         let state = env["VT_SNAPSHOT_STATE"] ?? "idle"
-        let dark = (env["VT_SNAPSHOT_APPEARANCE"] ?? "light") == "dark"
-        NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        // system = 不强制设 NSApp.appearance，跟随系统，用来复现真实运行时的配色问题
+        switch env["VT_SNAPSHOT_APPEARANCE"] ?? "light" {
+        case "dark":   NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "system": break
+        default:       NSApp.appearance = NSAppearance(named: .aqua)
+        }
         if (env["VT_SNAPSHOT_STRATEGY"] ?? "now") == "episode" {
             Settings.shared.strategy = .episode
         } else {
@@ -179,6 +183,17 @@ enum DevSnapshot {
             }
         } else {
             panel.apply(state: .idle)
+        }
+
+        // VT_SNAPSHOT_CLICK=<分钟>：模拟「点选某个时长胶囊」之后的样式刷新。
+        // 给 isOn 赋值会走 didSet -> applyStyle()，和真实点击是同一条路径，
+        // 但不会改动用户的设置，适合做视觉回归。
+        if let clicked = env["VT_SNAPSHOT_CLICK"], !clicked.isEmpty {
+            func simulate(_ v: NSView) {
+                if let chip = v as? ChipButton { chip.isOn = (chip.title == clicked) }
+                for sub in v.subviews { simulate(sub) }
+            }
+            simulate(panel)
         }
 
         let size = NSSize(width: PanelView.panelWidth, height: panel.fittingPanelHeight)

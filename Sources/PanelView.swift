@@ -1,5 +1,20 @@
 import AppKit
 
+/// 把动态 NSColor 按视图的 effectiveAppearance 解析成静态 RGB 色再取 cgColor。
+///
+/// 坑：直接写 `NSColor.textBackgroundColor.cgColor`，AppKit 会按「当前 drawing
+/// appearance」解析；在事件回调（isOn 的 didSet、点击处理）里没有 drawing 上下文，
+/// 会回落成浅色的白色。而 attributedTitle / textColor 里的动态色由控件绘制时
+/// 按深色外观解析成白字 —— 于是深色模式下未选中项变成白底白字，数字直接消失。
+/// 背景与文字必须走同一套解析，这里统一处理。
+private func resolved(_ color: NSColor, for view: NSView) -> NSColor {
+    var out = color
+    view.effectiveAppearance.performAsCurrentDrawingAppearance {
+        out = color.usingColorSpace(.deviceRGB) ?? color
+    }
+    return out
+}
+
 // MARK: - 小控件
 
 /// 圆角标签（状态徽章）
@@ -34,8 +49,8 @@ final class BadgeView: NSView {
     }
 
     private func applyColors() {
-        label.textColor = textColor
-        layer?.backgroundColor = fillColor.cgColor
+        label.textColor = resolved(textColor, for: self)
+        layer?.backgroundColor = resolved(fillColor, for: self).cgColor
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -71,12 +86,21 @@ final class ChipButton: NSButton {
     @objc private func tapped() { onTap?() }
 
     func applyStyle() {
-        layer?.backgroundColor = isOn ? NSColor.controlAccentColor.cgColor : NSColor.textBackgroundColor.cgColor
-        layer?.borderColor = isOn ? NSColor.controlAccentColor.cgColor : NSColor.separatorColor.cgColor
+        let selected = isOn
+        let bg: NSColor = selected ? .controlAccentColor : .textBackgroundColor
+        let border: NSColor = selected ? .controlAccentColor : .separatorColor
+        let fg: NSColor = selected ? .white : .labelColor
+        layer?.backgroundColor = resolved(bg, for: self).cgColor
+        layer?.borderColor = resolved(border, for: self).cgColor
         attributedTitle = NSAttributedString(string: title, attributes: [
-            .foregroundColor: isOn ? NSColor.white : NSColor.labelColor,
-            .font: NSFont.systemFont(ofSize: 12, weight: isOn ? .semibold : .regular),
+            .foregroundColor: resolved(fg, for: self),
+            .font: NSFont.systemFont(ofSize: 12, weight: selected ? .semibold : .regular),
         ])
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyStyle()   // 加入窗口后 effectiveAppearance 才最终确定
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -129,10 +153,17 @@ final class OptionCard: NSView {
     override func mouseDown(with event: NSEvent) { onTap?() }
 
     func applyStyle() {
-        layer?.backgroundColor = (isOn ? NSColor.controlAccentColor.withAlphaComponent(0.10)
-                                      : NSColor.textBackgroundColor).cgColor
-        layer?.borderColor = (isOn ? NSColor.controlAccentColor : NSColor.separatorColor).cgColor
-        titleLabel.textColor = isOn ? .controlAccentColor : .labelColor
+        let bg: NSColor = isOn ? NSColor.controlAccentColor.withAlphaComponent(0.10)
+                               : .textBackgroundColor
+        let border: NSColor = isOn ? .controlAccentColor : .separatorColor
+        layer?.backgroundColor = resolved(bg, for: self).cgColor
+        layer?.borderColor = resolved(border, for: self).cgColor
+        titleLabel.textColor = resolved(isOn ? .controlAccentColor : .labelColor, for: self)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyStyle()
     }
 
     override func viewDidChangeEffectiveAppearance() {
